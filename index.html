@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Family Photo Evidence</title>
+<meta name="description" content="Turn family photos into one dated, captioned PDF for a visa application. Runs in your browser; photos never leave your device.">
+<meta name="theme-color" content="#1f4d3a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="styles.css">
+<script src="vendor/pdf-lib.min.js" defer></script>
+<script src="vendor/fontkit.umd.min.js" defer></script>
+<script src="vendor/exifr-lite.umd.js" defer></script>
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<header class="top">
+  <h1>Family Photo Evidence</h1>
+  <p class="lede">Add photos, give each one a date and a sentence, and get one PDF in LaTeX typesetting to show your family relationship in a visa application. Photos stay on this device; nothing is uploaded.</p>
+</header>
+
+<main>
+  <details class="card" id="settings-card">
+    <summary><span>Document details</span><span class="summary-hint" id="settings-hint"></span></summary>
+    <div class="grid">
+      <label>Title
+        <input id="s-title" type="text" placeholder="e.g. Photographs of our family">
+      </label>
+      <label>Subtitle
+        <input id="s-subtitle" type="text" placeholder="e.g. Evidence of our relationship as a family">
+      </label>
+      <label>Names
+        <input id="s-names" type="text" placeholder="e.g. Anna Schwarz, Tom Schwarz and Leo Schwarz" autocomplete="off">
+      </label>
+      <label>Reference <small>(optional)</small>
+        <input id="s-reference" type="text" placeholder="e.g. Application number 12345678">
+      </label>
+      <label>Photos per page
+        <select id="s-layout">
+          <option value="1">1 (large)</option>
+          <option value="2">2</option>
+        </select>
+      </label>
+      <label>Paper
+        <select id="s-paper">
+          <option value="a4">A4</option>
+          <option value="letter">US Letter</option>
+        </select>
+      </label>
+      <label>Image quality
+        <select id="s-quality">
+          <option value="auto">Best quality under size limit</option>
+          <option value="high">High</option>
+          <option value="standard">Standard</option>
+          <option value="small">Small</option>
+          <option value="tiny">Very small</option>
+        </select>
+      </label>
+      <label>Size limit in MB
+        <input id="s-limit" type="number" min="1" max="100" step="0.5" inputmode="decimal">
+        <small>Use the file size limit of the form you upload to.</small>
+      </label>
+    </div>
+  </details>
+
+  <section class="card">
+    <div class="photos-head">
+      <h2>Photos <span id="count" class="count"></span></h2>
+      <div class="actions">
+        <label class="btn primary" for="file-input">Add photos</label>
+        <input id="file-input" type="file" accept="image/*,.heic,.heif" multiple hidden>
+        <button class="btn" id="sort-btn" type="button">Sort by date</button>
+      </div>
+    </div>
+    <div id="drop" class="drop" hidden>Drop photos here</div>
+    <p id="progress" class="progress" hidden></p>
+    <p id="empty" class="empty">No photos yet. On a phone, <b>Add photos</b> opens your photo library or camera. On a laptop you can also drag photos onto this page.</p>
+    <ol id="list" class="list"></ol>
+  </section>
+
+  <section class="card" id="out-card" hidden>
+    <h2>PDF</h2>
+    <p id="out-info"></p>
+    <p id="out-warn" class="warn" hidden></p>
+    <div class="actions">
+      <a class="btn primary" id="out-download" download>Download PDF</a>
+      <button class="btn" id="out-share" type="button" hidden>Share or save to Files</button>
+      <a class="btn" id="out-open" target="_blank" rel="noopener">Open</a>
+    </div>
+  </section>
+
+  <section class="card fineprint">
+    <h2>Privacy and storage</h2>
+    <p>The app runs in your browser. Photos and descriptions are stored in this browser only (IndexedDB), so you can close the page and continue later on the same device. Nothing is sent to a server; the PDF is built on your phone or laptop.</p>
+    <p>On Android, install the app (browser menu, "Add to Home screen" or "Install app") and it appears in the share sheet of your gallery. On iPhone, use <b>Add photos</b>, which opens the photo library.</p>
+    <p><button class="linkish" id="clear-btn" type="button">Delete all photos and text from this browser</button></p>
+  </section>
+</main>
+
+<footer class="bar">
+  <span id="status" class="status"></span>
+  <button class="btn primary big" id="make-btn" type="button">Create PDF</button>
+</footer>
+
+<template id="item-tpl">
+  <li class="item">
+    <div class="thumb-wrap"><img class="thumb" alt=""><span class="fig"></span></div>
+    <div class="fields">
+      <div class="row">
+        <label class="date-l">Date taken
+          <input class="f-date" type="date">
+        </label>
+        <label class="check"><input class="f-month" type="checkbox"> Month only</label>
+      </div>
+      <p class="date-src"></p>
+      <label>Place
+        <input class="f-place" type="text" placeholder="e.g. Queenstown, Otago" maxlength="120">
+      </label>
+      <label>Who is in the photo
+        <input class="f-people" type="text" placeholder="e.g. Anna, Tom and Leo" maxlength="160">
+      </label>
+      <label>Description
+        <textarea class="f-caption" rows="2" maxlength="500" placeholder="e.g. Leo's first day at kindergarten; we both took him there."></textarea>
+      </label>
+      <div class="item-actions">
+        <button type="button" class="icon" data-act="up" title="Move up" aria-label="Move up">↑</button>
+        <button type="button" class="icon" data-act="down" title="Move down" aria-label="Move down">↓</button>
+        <button type="button" class="icon" data-act="rotate" title="Rotate 90°" aria-label="Rotate">⟳</button>
+        <button type="button" class="icon danger" data-act="remove" title="Remove" aria-label="Remove">✕</button>
+      </div>
+    </div>
+  </li>
+</template>
+</body>
+</html>
