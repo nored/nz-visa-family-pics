@@ -1,7 +1,7 @@
 // Service worker: offline app shell, and the Web Share Target that receives photos
 // shared from the Android share sheet when the app is installed.
 
-const CACHE = 'fpe-v1';
+const CACHE = 'fpe-v2';
 const SHELL = [
   './', 'index.html', 'styles.css', 'app.js', 'pdf.js', 'db.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',

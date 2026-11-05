@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Family Photo Evidence</title>
-<meta name="description" content="Turn family photos into one dated, captioned PDF for a visa application. Runs in your browser; photos never leave your device.">
+<meta name="description" content="Pick family photos, add one caption line each, get one PDF in LaTeX typesetting. Photos never leave your device.">
 <meta name="theme-color" content="#1f4d3a">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png" type="image/png">
@@ -18,118 +18,95 @@
 <body>
 <header class="top">
   <h1>Family Photo Evidence</h1>
-  <p class="lede">Add photos, give each one a date and a sentence, and get one PDF in LaTeX typesetting to show your family relationship in a visa application. Photos stay on this device; nothing is uploaded.</p>
+  <nav class="tabs" role="tablist">
+    <button type="button" role="tab" id="tab-choose" aria-selected="true" aria-controls="choose">1&nbsp;Choose <span id="tab-choose-n"></span></button>
+    <button type="button" role="tab" id="tab-captions" aria-selected="false" aria-controls="captions">2&nbsp;Captions <span id="tab-captions-n"></span></button>
+  </nav>
 </header>
 
 <main>
-  <details class="card" id="settings-card">
-    <summary><span>Document details</span><span class="summary-hint" id="settings-hint"></span></summary>
-    <div class="grid">
-      <label>Title
-        <input id="s-title" type="text" placeholder="e.g. Photographs of our family">
-      </label>
-      <label>Subtitle
-        <input id="s-subtitle" type="text" placeholder="e.g. Evidence of our relationship as a family">
-      </label>
-      <label>Names
-        <input id="s-names" type="text" placeholder="e.g. Anna Schwarz, Tom Schwarz and Leo Schwarz" autocomplete="off">
-      </label>
-      <label>Reference <small>(optional)</small>
-        <input id="s-reference" type="text" placeholder="e.g. Application number 12345678">
-      </label>
-      <label>Photos per page
-        <select id="s-layout">
-          <option value="1">1 (large)</option>
-          <option value="2">2</option>
-        </select>
-      </label>
-      <label>Paper
-        <select id="s-paper">
-          <option value="a4">A4</option>
-          <option value="letter">US Letter</option>
-        </select>
-      </label>
-      <label>Image quality
-        <select id="s-quality">
-          <option value="auto">Best quality under size limit</option>
-          <option value="high">High</option>
-          <option value="standard">Standard</option>
-          <option value="small">Small</option>
-          <option value="tiny">Very small</option>
-        </select>
-      </label>
-      <label>Size limit in MB
-        <input id="s-limit" type="number" min="1" max="100" step="0.5" inputmode="decimal">
-        <small>Use the file size limit of the form you upload to.</small>
-      </label>
+  <section id="choose" role="tabpanel" aria-labelledby="tab-choose">
+    <div class="toolbar">
+      <label class="btn primary" for="file-input">Add photos</label>
+      <input id="file-input" type="file" accept="image/*,.heic,.heif" multiple hidden>
+      <label class="btn desktop-only" for="folder-input">Add folder</label>
+      <input id="folder-input" type="file" webkitdirectory multiple hidden>
+      <button class="btn" id="select-all" type="button">Select all</button>
+      <button class="btn" id="select-none" type="button">Select none</button>
     </div>
-  </details>
-
-  <section class="card">
-    <div class="photos-head">
-      <h2>Photos <span id="count" class="count"></span></h2>
-      <div class="actions">
-        <label class="btn primary" for="file-input">Add photos</label>
-        <input id="file-input" type="file" accept="image/*,.heic,.heif" multiple hidden>
-        <button class="btn" id="sort-btn" type="button">Sort by date</button>
-      </div>
-    </div>
-    <div id="drop" class="drop" hidden>Drop photos here</div>
     <p id="progress" class="progress" hidden></p>
-    <p id="empty" class="empty">No photos yet. On a phone, <b>Add photos</b> opens your photo library or camera. On a laptop you can also drag photos onto this page.</p>
-    <ol id="list" class="list"></ol>
+    <p id="choose-empty" class="empty">Add the photos you might use. Then tap each photo that should go into the PDF. Photos stay on this device.</p>
+    <p id="choose-hint" class="hint" hidden>Tap a photo to include it. ⤢ shows it large.</p>
+    <div id="grid"></div>
+    <p class="fineprint" id="cleanup" hidden><button class="linkish" id="remove-unselected" type="button">Remove photos that are not selected</button> · <button class="linkish" id="clear-all" type="button">Remove everything</button></p>
   </section>
 
-  <section class="card" id="out-card" hidden>
-    <h2>PDF</h2>
-    <p id="out-info"></p>
-    <p id="out-warn" class="warn" hidden></p>
-    <div class="actions">
-      <a class="btn primary" id="out-download" download>Download PDF</a>
-      <button class="btn" id="out-share" type="button" hidden>Share or save to Files</button>
-      <a class="btn" id="out-open" target="_blank" rel="noopener">Open</a>
-    </div>
-  </section>
-
-  <section class="card fineprint">
-    <h2>Privacy and storage</h2>
-    <p>The app runs in your browser. Photos and descriptions are stored in this browser only (IndexedDB), so you can close the page and continue later on the same device. Nothing is sent to a server; the PDF is built on your phone or laptop.</p>
-    <p>On Android, install the app (browser menu, "Add to Home screen" or "Install app") and it appears in the share sheet of your gallery. On iPhone, use <b>Add photos</b>, which opens the photo library.</p>
-    <p><button class="linkish" id="clear-btn" type="button">Delete all photos and text from this browser</button></p>
+  <section id="captions" role="tabpanel" aria-labelledby="tab-captions" hidden>
+    <p id="captions-empty" class="empty">No photos selected yet. Go to <b>1 Choose</b> and tap the photos you want.</p>
+    <ol id="cards" class="cards"></ol>
+    <details class="options">
+      <summary>PDF options</summary>
+      <div class="grid2">
+        <label>Photos per page
+          <select id="s-layout">
+            <option value="1">1</option>
+            <option value="2">2</option>
+          </select>
+        </label>
+        <label>Paper
+          <select id="s-paper">
+            <option value="a4">A4</option>
+            <option value="letter">US Letter</option>
+          </select>
+        </label>
+        <label>Maximum file size (MB)
+          <input id="s-limit" type="number" min="1" max="100" step="0.5" inputmode="decimal">
+        </label>
+      </div>
+    </details>
   </section>
 </main>
 
 <footer class="bar">
-  <span id="status" class="status"></span>
-  <button class="btn primary big" id="make-btn" type="button">Create PDF</button>
+  <span id="status" class="status" role="status"></span>
+  <span class="bar-actions">
+    <button class="btn primary big" id="make-btn" type="button">Create PDF</button>
+    <a class="btn primary big" id="dl-btn" download hidden>Download PDF</a>
+    <button class="btn big" id="share-btn" type="button" hidden>Share</button>
+  </span>
 </footer>
 
-<template id="item-tpl">
-  <li class="item">
-    <div class="thumb-wrap"><img class="thumb" alt=""><span class="fig"></span></div>
-    <div class="fields">
-      <div class="row">
-        <label class="date-l">Date taken
-          <input class="f-date" type="date">
-        </label>
-        <label class="check"><input class="f-month" type="checkbox"> Month only</label>
+<div id="viewer" class="viewer" hidden role="dialog" aria-modal="true" aria-label="Photo viewer">
+  <div class="viewer-top">
+    <span id="viewer-pos"></span>
+    <button type="button" class="vbtn" id="viewer-close" aria-label="Close">✕</button>
+  </div>
+  <img id="viewer-img" alt="">
+  <div class="viewer-bottom">
+    <button type="button" class="vbtn" id="viewer-prev" aria-label="Previous">‹</button>
+    <button type="button" class="btn big" id="viewer-toggle"></button>
+    <button type="button" class="vbtn" id="viewer-next" aria-label="Next">›</button>
+  </div>
+</div>
+
+<template id="tile-tpl">
+  <div class="tile">
+    <button type="button" class="pick" aria-pressed="false"><img alt="" loading="lazy" decoding="async"><span class="tick" aria-hidden="true">✓</span></button>
+    <button type="button" class="zoom" aria-label="Show large">⤢</button>
+  </div>
+</template>
+
+<template id="card-tpl">
+  <li class="card">
+    <div class="card-img"><img alt="" loading="lazy" decoding="async"><span class="fig"></span></div>
+    <div class="card-fields">
+      <div class="date-row">
+        <input class="f-date" type="date" aria-label="Date taken">
+        <span class="date-src"></span>
+        <button type="button" class="mini" data-act="rotate" aria-label="Rotate">⟳</button>
+        <button type="button" class="mini" data-act="drop" aria-label="Take out of PDF">✕</button>
       </div>
-      <p class="date-src"></p>
-      <label>Place
-        <input class="f-place" type="text" placeholder="e.g. Queenstown, Otago" maxlength="120">
-      </label>
-      <label>Who is in the photo
-        <input class="f-people" type="text" placeholder="e.g. Anna, Tom and Leo" maxlength="160">
-      </label>
-      <label>Description
-        <textarea class="f-caption" rows="2" maxlength="500" placeholder="e.g. Leo's first day at kindergarten; we both took him there."></textarea>
-      </label>
-      <div class="item-actions">
-        <button type="button" class="icon" data-act="up" title="Move up" aria-label="Move up">↑</button>
-        <button type="button" class="icon" data-act="down" title="Move down" aria-label="Move down">↓</button>
-        <button type="button" class="icon" data-act="rotate" title="Rotate 90°" aria-label="Rotate">⟳</button>
-        <button type="button" class="icon danger" data-act="remove" title="Remove" aria-label="Remove">✕</button>
-      </div>
+      <textarea class="f-caption" rows="2" maxlength="400" enterkeyhint="next" aria-label="Caption" placeholder="One sentence about this photo"></textarea>
     </div>
   </li>
 </template>
