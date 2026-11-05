@@ -20,7 +20,7 @@
       "title": "title",
       "text": "text",
       "files": [
-        { "name": "photos", "accept": ["image/*", ".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp"] }
+        { "name": "photos", "accept": ["image/*", ".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", "application/zip", ".zip"] }
       ]
     }
   }

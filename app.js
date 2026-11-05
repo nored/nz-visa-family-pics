@@ -1,5 +1,6 @@
 import * as db from './db.js';
 import { buildPdf, QUALITY, formatDate, monthLabel } from './pdf.js';
+import { writeZip, readZip, crc32, PROJECT_FORMAT } from './project.js';
 
 const $ = sel => document.querySelector(sel);
 const STORE_EDGE = 2000; // long edge of the copy kept in the browser
@@ -14,6 +15,7 @@ const state = {
   tab: 'choose',
   busy: false,
   pdf: null, // {url, file}
+  project: null, // {url, file} of the last saved project file
   viewer: { ids: [], index: 0 },
 };
 
@@ -92,14 +94,36 @@ async function drawToJpeg(src, edge, quality, rotate = 0) {
 const pad = n => String(n).padStart(2, '0');
 const isoOf = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
-async function readExifDate(file) {
+// Text from XMP/IPTC/EXIF can be a string, a {lang, value} object, or a list of either.
+function metaText(v) {
+  if (v == null) return '';
+  if (Array.isArray(v)) return v.map(metaText).find(Boolean) || '';
+  if (typeof v === 'object') return metaText(v.value ?? v.description ?? '');
+  return String(v).replace(/\0/g, '').replace(/\s+/g, ' ').trim();
+}
+// Cameras write placeholder descriptions such as "OLYMPUS DIGITAL CAMERA" or "SONY DSC".
+const JUNK_CAPTION = /^(?:[A-Z0-9 ._-]*(?:DIGITAL CAMERA|DSC|CAMERA|DCIM)[A-Z0-9 ._-]*|default|image|photo|picture|untitled|screenshot)$/i;
+
+// Everything the file can tell us: the date it was taken and any caption written into it.
+async function readMeta(file) {
+  const out = { date: '', dateSource: '', caption: '' };
   try {
-    // the lite build throws on the `pick` option, so parse the default segments
-    const ex = await window.exifr.parse(file);
-    const d = ex && (ex.DateTimeOriginal || ex.CreateDate || ex.DateTimeDigitized);
-    if (d instanceof Date && !isNaN(d) && d.getFullYear() > 1900) return isoOf(d);
-  } catch { /* no EXIF */ }
-  return '';
+    const ex = await window.exifr.parse(file, { xmp: true, iptc: true, ifd0: true, exif: true, gps: false, interop: false, mergeOutput: true });
+    if (ex) {
+      const d = [ex.DateTimeOriginal, ex.CreateDate, ex.DateTimeDigitized, ex.DateCreated, ex.ModifyDate]
+        .find(x => x instanceof Date && !isNaN(x) && x.getFullYear() > 1900);
+      if (d) { out.date = isoOf(d); out.dateSource = 'photo'; }
+      // caption fields in order of how deliberately a person wrote them
+      const cap = [ex.description, ex.Caption, ex['Caption-Abstract'], ex.ImageDescription, ex.XPComment, ex.UserComment, ex.title, ex.XPTitle, ex.Headline, ex.ObjectName]
+        .map(metaText).find(t => t && !JUNK_CAPTION.test(t));
+      if (cap) out.caption = cap.slice(0, 400);
+    }
+  } catch { /* no readable metadata */ }
+  if (!out.date) { const d = filenameDate(file.name); if (d) { out.date = d; out.dateSource = 'filename'; } }
+  if (!out.date && file.lastModified > Date.UTC(1990, 0, 1) && file.lastModified < Date.now() - 864e5) {
+    out.date = isoOf(new Date(file.lastModified)); out.dateSource = 'filedate';
+  }
+  return out;
 }
 
 // WhatsApp, Android and screenshot file names carry the date: IMG-20230514-WA0003, PXL_20230514_..., Screenshot 2024-05-01
@@ -110,9 +134,73 @@ function filenameDate(name) {
 
 const newId = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
+// Per-field edit times, so a merge can keep the newest date, caption and selection.
+const FIELDS = ['date', 'caption', 'selected'];
+function touch(rec, field) { rec.t = { ...(rec.t || {}), [field]: Date.now() }; }
+function ensureMeta(rec) {
+  rec.caption ??= '';
+  rec.selected ??= true; // records from the first version were all meant for the PDF
+  rec.t ??= {};
+  for (const f of FIELDS) rec.t[f] ??= f === 'caption' && !rec.caption ? 0 : rec.added || 0;
+}
+
+// Difference hash (17x16 grey pixels, 256 bits) of the preview. The same photo from two
+// sources (camera roll original, WhatsApp copy, rescaled export) hashes to nearly the same bits.
+async function imageHash(blob) {
+  const src = await decodeAny(blob);
+  // draw at 68x64 with smoothing, then box-average 4x4 blocks down to 17x16: steadier than one big downscale
+  const c = document.createElement('canvas');
+  c.width = 68; c.height = 64;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src, 0, 0, 68, 64);
+  if (src.close) src.close();
+  const px = ctx.getImageData(0, 0, 68, 64).data;
+  const g = new Float32Array(17 * 16);
+  for (let y = 0; y < 64; y++) {
+    for (let x = 0; x < 68; x++) {
+      const i = (y * 68 + x) * 4;
+      g[(y >> 2) * 17 + (x >> 2)] += px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114;
+    }
+  }
+  let hex = '';
+  for (let y = 0; y < 16; y++) {
+    for (let x = 0; x < 16; x += 4) {
+      let nib = 0;
+      for (let k = 0; k < 4; k++) nib = (nib << 1) | (g[y * 17 + x + k] > g[y * 17 + x + k + 1] ? 1 : 0);
+      hex += nib.toString(16);
+    }
+  }
+  return hex;
+}
+const HASH_VERSION = 2;
+const BITS = Array.from({ length: 16 }, (_, i) => (i.toString(2).match(/1/g) || []).length);
+function hamming(a, b) {
+  if (!a || !b || a.length !== b.length) return Infinity;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d += BITS[parseInt(a[i], 16) ^ parseInt(b[i], 16)];
+  return d;
+}
+const SAME_PHOTO = 14; // of 256 bits
+const dayGap = (a, b) => (a && b ? Math.abs(Date.parse(a) - Date.parse(b)) / 864e5 : 0);
+function findSame(inc) {
+  if (state.photos.has(inc.id)) return state.photos.get(inc.id);
+  let best = null, bestD = SAME_PHOTO + 1;
+  for (const p of state.photos.values()) {
+    if (dayGap(p.date, inc.date) > 1) continue;
+    const d = hamming(p.hash, inc.hash);
+    if (d < bestD) { best = p; bestD = d; }
+  }
+  return best;
+}
+
+const isZip = f => f && (/zip/i.test(f.type) || /\.zip$/i.test(f.name || ''));
+
 async function addFiles(fileList, { select = false } = {}) {
-  const files = [...fileList].filter(isImage);
-  if (!files.length) { setStatus('No images found in that selection.', true); return; }
+  const all = [...fileList];
+  for (const z of all.filter(isZip)) await openProject(z);
+  const files = all.filter(f => !isZip(f) && isImage(f));
+  if (!files.length) { if (!all.some(isZip)) setStatus('No images found in that selection.', true); return; }
   const known = new Set([...state.photos.values()].map(p => p.fp));
   let added = 0, skipped = 0;
   const failed = [];
@@ -124,16 +212,18 @@ async function addFiles(fileList, { select = false } = {}) {
     const fp = `${f.name}|${f.size}`;
     if (known.has(fp)) { skipped++; continue; }
     try {
-      let date = await readExifDate(f), dateSource = date ? 'photo' : '';
-      if (!date) { date = filenameDate(f.name); if (date) dateSource = 'filename'; }
+      const { date, dateSource, caption } = await readMeta(f);
       const src = await decodeAny(f);
       const full = await drawToJpeg(src, STORE_EDGE, 0.9);
       const thumb = await drawToJpeg(src, THUMB_EDGE, 0.78);
       if (src.close) src.close();
+      const now = Date.now() + i;
       const rec = {
-        id: newId(), fp, name: f.name || 'photo', added: Date.now() + i,
+        id: newId(), fp, name: f.name || 'photo', added: now,
         blob: full.blob, thumb: thumb.blob, w: full.w, h: full.h,
-        date, dateSource, caption: '', selected: select,
+        hash: await imageHash(thumb.blob), hv: HASH_VERSION,
+        date, dateSource, caption, selected: select,
+        t: { date: now, caption: caption ? now : 0, selected: now },
       };
       await db.putPhoto(rec);
       state.photos.set(rec.id, rec);
@@ -170,11 +260,7 @@ function flushSaves() {
 
 async function load() {
   const [photos, settings] = await Promise.all([db.getAllPhotos(), db.getMeta('settings')]);
-  for (const p of photos) {
-    p.caption ??= '';
-    p.selected ??= true; // records from the first version were all meant for the PDF
-    state.photos.set(p.id, p);
-  }
+  for (const p of photos) { ensureMeta(p); state.photos.set(p.id, p); }
   state.settings = { ...DEFAULT_SETTINGS, ...(settings || {}) };
 }
 
@@ -240,7 +326,8 @@ function paintCard(card, rec) {
   card.classList.toggle('todo', needsWork(rec));
   card.querySelector('.f-date').classList.toggle('need', !rec.date);
   const src = card.querySelector('.date-src');
-  src.textContent = !rec.date ? 'add date' : rec.dateSource === 'filename' ? 'from file name' : '';
+  src.textContent = !rec.date ? 'add date' : rec.dateSource === 'filename' ? 'from file name, check'
+    : rec.dateSource === 'filedate' ? 'file date, check' : '';
   src.classList.toggle('missing', !rec.date);
 }
 
@@ -336,6 +423,7 @@ function stepViewer(d) {
 
 function toggleSelected(rec) {
   rec.selected = !rec.selected;
+  touch(rec, 'selected');
   db.putPhoto(rec);
   invalidatePdf();
 }
@@ -352,11 +440,11 @@ function bind() {
     });
   }
   $('#select-all').addEventListener('click', async () => {
-    for (const p of state.photos.values()) if (!p.selected) { p.selected = true; await db.putPhoto(p); }
+    for (const p of state.photos.values()) if (!p.selected) { p.selected = true; touch(p, 'selected'); await db.putPhoto(p); }
     invalidatePdf(); renderGrid();
   });
   $('#select-none').addEventListener('click', async () => {
-    for (const p of state.photos.values()) if (p.selected) { p.selected = false; await db.putPhoto(p); }
+    for (const p of state.photos.values()) if (p.selected) { p.selected = false; touch(p, 'selected'); await db.putPhoto(p); }
     invalidatePdf(); renderGrid();
   });
   $('#remove-unselected').addEventListener('click', async () => {
@@ -418,8 +506,8 @@ function bind() {
     const card = e.target.closest('.card');
     if (!card) return;
     const rec = state.photos.get(card.dataset.id);
-    if (e.target.classList.contains('f-caption')) rec.caption = e.target.value;
-    else if (e.target.classList.contains('f-date')) { rec.date = e.target.value; rec.dateSource = e.target.value ? 'manual' : ''; }
+    if (e.target.classList.contains('f-caption')) { rec.caption = e.target.value; touch(rec, 'caption'); }
+    else if (e.target.classList.contains('f-date')) { rec.date = e.target.value; rec.dateSource = e.target.value ? 'manual' : ''; touch(rec, 'date'); }
     else return;
     paintCard(card, rec);
     saveSoon(rec);
@@ -462,6 +550,27 @@ function bind() {
   }
 
   $('#make-btn').addEventListener('click', makePdf);
+
+  // project file
+  const dlg = $('#project-dlg');
+  $('#project-btn').addEventListener('click', () => { flushSaves(); paintProject(); dlg.showModal(); });
+  $('#p-close').addEventListener('click', () => dlg.close());
+  dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
+  $('#p-only-selected').addEventListener('change', () => { dropProjectFile(); paintProject(); });
+  $('#p-save').addEventListener('click', saveProject);
+  $('#p-share').addEventListener('click', () => {
+    if (state.project) navigator.share({ files: [state.project.file], title: state.project.file.name }).catch(() => {});
+  });
+  $('#p-open-input').addEventListener('change', async e => {
+    const files = [...e.target.files];
+    e.target.value = '';
+    if (!files.length) return;
+    dlg.close();
+    for (const f of files) await openProject(f);
+  });
+  // save typed text before the page is hidden, reloaded or closed
+  window.addEventListener('pagehide', flushSaves);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) flushSaves(); });
   $('#share-btn').addEventListener('click', () => {
     if (state.pdf) navigator.share({ files: [state.pdf.file], title: state.pdf.file.name }).catch(() => {});
   });
@@ -485,11 +594,166 @@ async function rotate(rec) {
     const full = await drawToJpeg(src, STORE_EDGE, 0.92, 90);
     const thumb = await drawToJpeg(src, THUMB_EDGE, 0.78, 90);
     if (src.close) src.close();
-    Object.assign(rec, { blob: full.blob, thumb: thumb.blob, w: full.w, h: full.h });
+    Object.assign(rec, { blob: full.blob, thumb: thumb.blob, w: full.w, h: full.h, crc: undefined, tcrc: undefined });
+    rec.hash = await imageHash(thumb.blob); rec.hv = HASH_VERSION;
     dropUrls(rec.id);
     await db.putPhoto(rec);
     invalidatePdf();
   } finally { setBusy(false); }
+}
+
+// ---------- project file ----------
+
+const slug = s => (s || '').replace(/[^a-z0-9-]+/gi, '').slice(0, 8);
+const fmtMB = bytes => `${(bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+
+function projectRecords() {
+  const only = $('#p-only-selected').checked;
+  return allSorted().filter(p => !only || p.selected);
+}
+function dropProjectFile() {
+  if (state.project) URL.revokeObjectURL(state.project.url);
+  state.project = null;
+}
+function paintProject() {
+  const recs = projectRecords();
+  const est = recs.reduce((s, p) => s + p.blob.size + p.thumb.size + 200, 0);
+  $('#p-count').textContent = `${recs.length} photo${recs.length === 1 ? '' : 's'}, about ${fmtMB(est)}`;
+  $('#p-save').disabled = state.busy || recs.length === 0;
+  const ready = !!state.project;
+  $('#p-ready').hidden = !ready;
+  $('#p-save').hidden = ready;
+  if (ready) {
+    $('#p-info').textContent = `${state.project.file.name}, ${fmtMB(state.project.file.size)}`;
+    const dl = $('#p-download');
+    dl.href = state.project.url; dl.download = state.project.file.name;
+    $('#p-share').hidden = !(navigator.canShare && navigator.canShare({ files: [state.project.file] }));
+  }
+}
+function pStatus(text, isError = false) {
+  const el = $('#p-status');
+  el.textContent = text;
+  el.classList.toggle('error', isError);
+}
+
+async function saveProject() {
+  if (state.busy) return;
+  flushSaves();
+  const recs = projectRecords();
+  if (!recs.length) return;
+  setBusy(true);
+  $('#p-save').disabled = true;
+  try {
+    const entries = [], photos = [];
+    for (const p of recs) {
+      const base = `${p.date || 'undated'}_${slug(p.id)}`;
+      // CRCs are cached on the record so the second save of a big project is fast
+      p.crc ??= await crc32(p.blob);
+      p.tcrc ??= await crc32(p.thumb);
+      entries.push({ name: `photos/${base}.jpg`, blob: p.blob, crc: p.crc });
+      entries.push({ name: `previews/${base}.jpg`, blob: p.thumb, crc: p.tcrc });
+      photos.push({
+        id: p.id, file: `photos/${base}.jpg`, preview: `previews/${base}.jpg`,
+        w: p.w, h: p.h, hash: p.hash, hv: p.hv, added: p.added, name: p.name,
+        date: p.date, dateSource: p.dateSource, caption: p.caption, selected: p.selected, t: p.t,
+      });
+      db.putPhoto(p);
+    }
+    const json = JSON.stringify({ format: PROJECT_FORMAT, version: 1, saved: new Date().toISOString(), settings: state.settings, photos }, null, 1);
+    entries.unshift({ name: 'project.json', blob: new Blob([json], { type: 'application/json' }) });
+    const zip = await writeZip(entries, (i, n) => pStatus(`Packing ${Math.ceil(i / 2)} of ${Math.ceil((n - 1) / 2)}`));
+    const name = `family-photos-project-${isoOf(new Date())}.zip`;
+    const file = new File([zip], name, { type: 'application/zip' });
+    dropProjectFile();
+    state.project = { url: URL.createObjectURL(file), file };
+    pStatus('Saved. Share it or download it, then open it on the other device with Open project file.');
+  } catch (e) {
+    console.error(e);
+    pStatus(`Saving failed: ${e.message}`, true);
+  } finally {
+    setBusy(false);
+    paintProject();
+  }
+}
+
+async function openProject(file) {
+  if (state.busy) return;
+  setBusy(true);
+  showTab('choose');
+  let added = 0, updated = 0, same = 0, report = '', failed = false;
+  try {
+    showProgress('Opening project file');
+    const zip = await readZip(file);
+    const jsonEntry = zip.get('project.json');
+    if (!jsonEntry) throw new Error('this ZIP is not a project file from this app');
+    const project = JSON.parse(await (await jsonEntry.get()).text());
+    if (project.format !== PROJECT_FORMAT) throw new Error('this ZIP is not a project file from this app');
+    const list = project.photos || [];
+    for (let i = 0; i < list.length; i++) {
+      const inc = list[i];
+      showProgress(`Merging photo ${i + 1} of ${list.length}`);
+      const photoEntry = zip.get(inc.file), prevEntry = zip.get(inc.preview);
+      if (!photoEntry) continue;
+      const blob = new Blob([await photoEntry.get()], { type: 'image/jpeg' });
+      let thumb = prevEntry ? new Blob([await prevEntry.get()], { type: 'image/jpeg' }) : null;
+      if (!thumb) thumb = (await drawToJpeg(await decodeAny(blob), THUMB_EDGE, 0.78)).blob;
+      if (!inc.hash || inc.hv !== HASH_VERSION) { inc.hash = await imageHash(thumb); inc.hv = HASH_VERSION; }
+      inc.t ||= {};
+      const match = findSame(inc);
+      if (match) {
+        let changed = false;
+        for (const f of FIELDS) {
+          if ((inc.t[f] || 0) > (match.t[f] || 0)) {
+            if (match[f] !== inc[f]) changed = true;
+            match[f] = inc[f];
+            match.t[f] = inc.t[f];
+            if (f === 'date') match.dateSource = inc.dateSource;
+          }
+        }
+        if ((inc.w || 0) * (inc.h || 0) > match.w * match.h) {
+          Object.assign(match, { blob, thumb, w: inc.w, h: inc.h, hash: inc.hash, hv: inc.hv, crc: undefined, tcrc: undefined });
+          changed = true;
+          dropUrls(match.id);
+        }
+        await db.putPhoto(match);
+        if (changed) updated++; else same++;
+      } else {
+        const rec = {
+          id: inc.id || newId(), fp: `project|${inc.id}`, name: inc.name || 'photo', added: inc.added || Date.now(),
+          blob, thumb, w: inc.w, h: inc.h, hash: inc.hash, hv: inc.hv,
+          date: inc.date || '', dateSource: inc.dateSource || '', caption: inc.caption || '', selected: !!inc.selected, t: inc.t,
+        };
+        ensureMeta(rec);
+        await db.putPhoto(rec);
+        state.photos.set(rec.id, rec);
+        added++;
+        if (added % 24 === 0) renderGrid();
+      }
+    }
+    invalidatePdf();
+    const msg = [];
+    if (added) msg.push(`Added ${added} photo${added === 1 ? '' : 's'}`);
+    if (updated) msg.push(`updated ${updated} you both had with the newer caption, date or selection`);
+    if (same) msg.push(`${same} already here unchanged`);
+    report = added || updated ? `${msg.join('; ')}.`.replace(/^u/, 'U') : `Nothing new in that project file (${same} photos already here).`;
+  } catch (e) {
+    console.error(e);
+    report = `Could not open ${file.name}: ${e.message}.`;
+    failed = true;
+  } finally {
+    hideProgress();
+    setBusy(false);
+    renderAll();
+    setStatus(report, failed); // after renderAll, which writes the normal status line
+  }
+}
+
+// Photos added before hashing existed get a hash in the background, so they can be matched in merges.
+async function backfillHashes() {
+  for (const p of state.photos.values()) {
+    if (p.hash && p.hv === HASH_VERSION) continue;
+    try { p.hash = await imageHash(p.thumb); p.hv = HASH_VERSION; await db.putPhoto(p); } catch (e) { console.warn('hash failed', e); }
+  }
 }
 
 // ---------- PDF ----------
@@ -499,15 +763,8 @@ async function makePdf() {
   flushSaves();
   const recs = selectedSorted();
   if (!recs.length) return;
-  const todo = recs.filter(needsWork);
-  if (todo.length) {
-    showTab('captions');
-    const card = document.querySelector(`.card[data-id="${CSS.escape(todo[0].id)}"]`);
-    card?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    (card?.querySelector('.f-date.need') || card?.querySelector('.f-caption'))?.focus({ preventScroll: true });
-    setStatus(`${todo.length} photo${todo.length === 1 ? ' needs' : 's need'} a caption or date.`, true);
-    return;
-  }
+  // unfinished captions do not block: the PDF then serves as a preview
+  const todo = recs.filter(needsWork).length;
   setBusy(true);
   try {
     const { bytes, pages, quality, overLimit } = await buildPdf(recs, state.settings, setStatus);
@@ -520,8 +777,10 @@ async function makePdf() {
     $('#make-btn').hidden = true;
     $('#share-btn').hidden = !(navigator.canShare && navigator.canShare({ files: [file] }));
     const mb = (bytes.length / 1024 / 1024).toFixed(1);
+    const summary = `${pages} page${pages === 1 ? '' : 's'}, ${mb} MB, ${QUALITY[quality].label} quality`;
     if (overLimit) setStatus(`${pages} pages, ${mb} MB. Over your ${state.settings.limitMB} MB limit even at the lowest quality; take some photos out.`, true);
-    else setStatus(`${pages} page${pages === 1 ? '' : 's'}, ${mb} MB, ${QUALITY[quality].label} quality`);
+    else if (todo) setStatus(`Preview: ${summary}. ${todo} photo${todo === 1 ? ' still needs' : 's still need'} a caption or date.`);
+    else setStatus(summary);
   } catch (e) {
     console.error(e);
     setStatus(`PDF failed: ${e.message}`, true);
@@ -535,7 +794,7 @@ async function makePdf() {
 async function drainInbox() {
   const items = await db.takeInbox();
   if (!items.length) return;
-  const files = items.map(it => (it.file instanceof File ? it.file : new File([it.file], it.name || 'shared.jpg', { type: it.type || 'image/jpeg' })));
+  const files = items.map(it => (it.file instanceof File ? it.file : new File([it.file], it.name || 'shared', { type: it.type || '' })));
   await addFiles(files, { select: true }); // photos shared one by one from the gallery are a deliberate choice
 }
 
@@ -547,6 +806,7 @@ async function main() {
   bind();
   renderAll();
   await drainInbox();
+  backfillHashes();
   if (location.search.includes('shared')) history.replaceState(null, '', location.pathname);
 }
 

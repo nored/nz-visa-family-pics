@@ -24,9 +24,14 @@
   }
 }
 @font-face {
-  font-family: "FPE Roman";
-  src: url("fonts/fperoman-bold.ttf") format("truetype");
-  font-weight: 600; font-display: swap;
+  font-family: "DejaVu Sans";
+  src: local("DejaVu Sans"), url("fonts/DejaVuSans.ttf") format("truetype");
+  font-weight: 400; font-display: swap;
+}
+@font-face {
+  font-family: "DejaVu Sans";
+  src: local("DejaVu Sans Bold"), local("DejaVuSans-Bold"), url("fonts/DejaVuSans-Bold.ttf") format("truetype");
+  font-weight: 600 700; font-display: swap;
 }
 
 * { box-sizing: border-box; }
@@ -36,7 +41,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--ink);
-  font: 1rem/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: .95rem/1.4 "DejaVu Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   padding-bottom: calc(80px + env(safe-area-inset-bottom));
 }
 body.noscroll { overflow: hidden; }
@@ -50,10 +55,11 @@ main { max-width: 1100px; margin: 0 auto; padding: 0 12px; }
   border-bottom: 1px solid var(--line);
   padding: calc(8px + env(safe-area-inset-top)) 12px 0;
 }
+.title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; max-width: 1100px; margin: 0 auto 4px; }
 h1 {
-  font-family: "FPE Roman", Georgia, serif; font-weight: 600;
-  font-size: 1.25rem; margin: 0 auto 6px; max-width: 1100px;
+  font-weight: 700; font-size: 1.15rem; margin: 0;
 }
+.btn.small { min-height: 34px; padding: 5px 12px; font-size: .85rem; }
 .tabs { display: flex; gap: 4px; max-width: 1100px; margin: 0 auto; }
 .tabs button {
   flex: 1; appearance: none; border: 0; background: none; color: var(--muted);
@@ -178,3 +184,22 @@ body.busy .bar .btn { opacity: .6; pointer-events: none; }
 .vbtn:disabled { opacity: .3; }
 .viewer .btn { min-width: 150px; }
 .viewer .btn:not(.primary) { background: rgba(255,255,255,.9); color: #000; border-color: transparent; }
+
+/* project sheet */
+.sheet {
+  width: min(520px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto;
+  border: 1px solid var(--line); border-radius: 14px; padding: 16px;
+  background: var(--card); color: var(--ink);
+}
+.sheet::backdrop { background: rgba(0,0,0,.5); }
+.sheet-head { display: flex; justify-content: space-between; align-items: center; }
+.sheet h2 { font-size: 1.15rem; margin: 0; }
+.sheet h3 { font-size: .95rem; margin: 18px 0 6px; }
+.sheet p { margin: 8px 0; }
+.vbtn.light { background: var(--bg); color: var(--ink); width: 40px; height: 40px; font-size: 1.1rem; }
+.check { display: flex; align-items: center; gap: 8px; min-height: 40px; }
+.check input { width: 20px; height: 20px; }
+.row-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+.p-ready { background: var(--bg); border-radius: 10px; padding: 4px 12px 12px; }
+.p-status { font-weight: 600; color: var(--accent); }
+.p-status.error { color: var(--error); }

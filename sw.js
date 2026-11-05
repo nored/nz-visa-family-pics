@@ -1,12 +1,12 @@
 // Service worker: offline app shell, and the Web Share Target that receives photos
 // shared from the Android share sheet when the app is installed.
 
-const CACHE = 'fpe-v2';
+const CACHE = 'fpe-v3';
 const SHELL = [
-  './', 'index.html', 'styles.css', 'app.js', 'pdf.js', 'db.js', 'manifest.webmanifest',
+  './', 'index.html', 'styles.css', 'app.js', 'pdf.js', 'db.js', 'project.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
-  'fonts/fperoman-regular.ttf', 'fonts/fperoman-bold.ttf', 'fonts/fperoman-italic.ttf',
-  'vendor/pdf-lib.min.js', 'vendor/fontkit.umd.min.js', 'vendor/exifr-lite.umd.js',
+  'fonts/DejaVuSans.ttf', 'fonts/DejaVuSans-Bold.ttf', 'fonts/DejaVuSans-Oblique.ttf',
+  'vendor/pdf-lib.min.js', 'vendor/fontkit.umd.min.js', 'vendor/exifr-full.umd.js',
 ];
 
 self.addEventListener('install', e => {

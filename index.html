@@ -12,12 +12,15 @@
 <link rel="stylesheet" href="styles.css">
 <script src="vendor/pdf-lib.min.js" defer></script>
 <script src="vendor/fontkit.umd.min.js" defer></script>
-<script src="vendor/exifr-lite.umd.js" defer></script>
+<script src="vendor/exifr-full.umd.js" defer></script>
 <script type="module" src="app.js"></script>
 </head>
 <body>
 <header class="top">
-  <h1>Family Photo Evidence</h1>
+  <div class="title-row">
+    <h1>Family Photo Evidence</h1>
+    <button type="button" class="btn small" id="project-btn">Project file</button>
+  </div>
   <nav class="tabs" role="tablist">
     <button type="button" role="tab" id="tab-choose" aria-selected="true" aria-controls="choose">1&nbsp;Choose <span id="tab-choose-n"></span></button>
     <button type="button" role="tab" id="tab-captions" aria-selected="false" aria-controls="captions">2&nbsp;Captions <span id="tab-captions-n"></span></button>
@@ -75,6 +78,30 @@
     <button class="btn big" id="share-btn" type="button" hidden>Share</button>
   </span>
 </footer>
+
+<dialog id="project-dlg" class="sheet" aria-labelledby="p-title">
+  <div class="sheet-head">
+    <h2 id="p-title">Project file</h2>
+    <button type="button" class="vbtn light" id="p-close" aria-label="Close">✕</button>
+  </div>
+  <p>One file with your photos, dates, captions and selection. Open it on another device to continue there, or send it to your partner to merge both sets.</p>
+  <h3>Save</h3>
+  <label class="check"><input type="checkbox" id="p-only-selected"> Only photos selected for the PDF</label>
+  <p class="hint" id="p-count"></p>
+  <button type="button" class="btn primary" id="p-save">Save project file</button>
+  <div id="p-ready" class="p-ready" hidden>
+    <p id="p-info"></p>
+    <div class="row-btns">
+      <button type="button" class="btn primary" id="p-share">Share (AirDrop, Telegram …)</button>
+      <a class="btn" id="p-download" download>Download</a>
+    </div>
+  </div>
+  <h3>Open</h3>
+  <label class="btn" for="p-open-input">Open project file</label>
+  <input id="p-open-input" type="file" multiple hidden>
+  <p class="hint">Opening adds to what is here. A photo you both have shows up once, with the most recent caption and date. You can open several project files.</p>
+  <p id="p-status" class="p-status" role="status"></p>
+</dialog>
 
 <div id="viewer" class="viewer" hidden role="dialog" aria-modal="true" aria-label="Photo viewer">
   <div class="viewer-top">

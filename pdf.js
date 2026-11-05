@@ -1,5 +1,5 @@
-// PDF typesetting with pdf-lib and FPE Roman, a TrueType conversion of Latin Modern
-// (the default LaTeX typeface). Runs entirely in the browser. Uses the globals PDFLib and fontkit.
+// PDF typesetting with pdf-lib and DejaVu Sans, laid out like a LaTeX figure page.
+// Runs entirely in the browser. Uses the globals PDFLib and fontkit.
 // Output is deliberately minimal: each photo, a LaTeX-style caption, and a page number.
 
 const PAPER = { a4: [595.28, 841.89], letter: [612, 792] };
@@ -29,8 +29,9 @@ let fontBytes = null;
 async function loadFontBytes() {
   if (fontBytes) return fontBytes;
   const names = ['regular', 'bold', 'italic'];
+  const files = { regular: 'DejaVuSans.ttf', bold: 'DejaVuSans-Bold.ttf', italic: 'DejaVuSans-Oblique.ttf' };
   const bufs = await Promise.all(names.map(n =>
-    fetch(`fonts/fperoman-${n}.ttf`).then(r => {
+    fetch(`fonts/${files[n]}`).then(r => {
       if (!r.ok) throw new Error(`Font ${n} failed to load (${r.status})`);
       return r.arrayBuffer();
     })));
@@ -179,9 +180,9 @@ async function typeset(photos, images, settings, onProgress) {
   pdf.registerFontkit(self.fontkit);
   const fb = await loadFontBytes();
   const F = {
-    regular: await pdf.embedFont(fb.regular, { subset: false }),
-    bold: await pdf.embedFont(fb.bold, { subset: false }),
-    italic: await pdf.embedFont(fb.italic, { subset: false }),
+    regular: await pdf.embedFont(fb.regular, { subset: true }),
+    bold: await pdf.embedFont(fb.bold, { subset: true }),
+    italic: await pdf.embedFont(fb.italic, { subset: true }),
   };
   const clean = makeSanitizer(F);
 
@@ -191,7 +192,7 @@ async function typeset(photos, images, settings, onProgress) {
   const top = PH - MTOP, bottom = MBOTTOM;
   const perPage = String(settings.layout) === '2' ? 2 : 1;
   const n = photos.length;
-  const CAP = 10.5, LEAD = 13.5, GAP_IMG_CAP = 10, GAP_FIG = 26;
+  const CAP = 10, LEAD = 13.5, GAP_IMG_CAP = 10, GAP_FIG = 26;
   const slotH = perPage === 1 ? top - bottom : (top - bottom - GAP_FIG) / 2;
   const capW = CW * 0.9;
 
