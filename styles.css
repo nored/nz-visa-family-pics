@@ -203,3 +203,4 @@ body.busy .bar .btn { opacity: .6; pointer-events: none; }
 .p-ready { background: var(--bg); border-radius: 10px; padding: 4px 12px 12px; }
 .p-status { font-weight: 600; color: var(--accent); }
 .p-status.error { color: var(--error); }
+.sheet[open] { position: fixed; inset: 0; margin: auto; height: fit-content; z-index: 40; } /* also places it in browsers without <dialog> */

@@ -1,6 +1,6 @@
-import * as db from './db.js';
-import { buildPdf, QUALITY, formatDate, monthLabel } from './pdf.js';
-import { writeZip, readZip, crc32, PROJECT_FORMAT } from './project.js';
+import * as db from './db.js?v=5';
+import { buildPdf, QUALITY, formatDate, monthLabel } from './pdf.js?v=5';
+import { writeZip, readZip, crc32, PROJECT_FORMAT } from './project.js?v=5';
 
 const $ = sel => document.querySelector(sel);
 const STORE_EDGE = 2000; // long edge of the copy kept in the browser
@@ -553,9 +553,13 @@ function bind() {
 
   // project file
   const dlg = $('#project-dlg');
-  $('#project-btn').addEventListener('click', () => { flushSaves(); paintProject(); dlg.showModal(); });
-  $('#p-close').addEventListener('click', () => dlg.close());
-  dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
+  $('#project-btn').addEventListener('click', () => {
+    flushSaves(); paintProject();
+    if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', ''); // browsers without <dialog>
+  });
+  const closeDlg = () => (typeof dlg.close === 'function' ? dlg.close() : dlg.removeAttribute('open'));
+  $('#p-close').addEventListener('click', closeDlg);
+  dlg.addEventListener('click', e => { if (e.target === dlg) closeDlg(); });
   $('#p-only-selected').addEventListener('change', () => { dropProjectFile(); paintProject(); });
   $('#p-save').addEventListener('click', saveProject);
   $('#p-share').addEventListener('click', () => {
@@ -565,7 +569,7 @@ function bind() {
     const files = [...e.target.files];
     e.target.value = '';
     if (!files.length) return;
-    dlg.close();
+    closeDlg();
     for (const f of files) await openProject(f);
   });
   // save typed text before the page is hidden, reloaded or closed
